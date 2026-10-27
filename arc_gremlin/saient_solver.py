@@ -585,33 +585,6 @@ def _rotate270(grid: Grid) -> Grid:
     return _rotate90(_rotate90(_rotate90(grid)))
 
 
-def _marker_frame_fill(grid: Grid) -> Grid:
-    g = _to_grid(grid)
-    h, w = _shape(g)
-    pts = [(y, x, g[y][x]) for y in range(h) for x in range(w) if g[y][x] != 0]
-    if len(pts) < 2:
-        return [row[:] for row in g]
-    pts.sort(key=lambda t: t[0])
-    y1, _, c1 = pts[0]
-    y2, _, c2 = pts[-1]
-    if y1 == y2:
-        return [row[:] for row in g]
-    split = max(0, min(h - 1, y2 - 2))
-    out = _blank(h, w, 0)
-    for y in range(0, split):
-        out[y][0] = c1
-        out[y][w - 1] = c1
-    for y in range(split, h):
-        out[y][0] = c2
-        out[y][w - 1] = c2
-    for x in range(w):
-        out[0][x] = c1
-        out[y1][x] = c1
-        out[y2][x] = c2
-        out[h - 1][x] = c2
-    return out
-
-
 def _route_control_color_paths(grid: Grid) -> Grid:
     g = _to_grid(grid)
     h, w = _shape(g)
@@ -811,27 +784,30 @@ def _biaxial_marker_expand_with_color(grid: Grid, intersection_color: int) -> Gr
 
 
 def _infer_biaxial_marker_intersection_color(pairs: list[TrainFeatures]) -> int | None:
+    """Infer a consistent crossing color, without a default color or partial fit."""
     if not pairs:
         return None
-    counts: dict[int, int] = {}
+    intersection_color: int | None = None
     for p in pairs:
         if p.input_shape != p.output_shape:
             return None
         markers = _singleton_markers(p.input_grid)
         if len(markers) < 2:
             return None
-        out = p.output_grid
         for y0, _, row_color in markers:
             for _, x1, col_color in markers:
                 if row_color == col_color:
                     continue
-                v = out[y0][x1]
-                if v == row_color or v == col_color:
-                    continue
-                counts[v] = counts.get(v, 0) + 1
-    if not counts:
-        return 2
-    return max(counts, key=counts.get)
+                value = p.output_grid[y0][x1]
+                if intersection_color is None:
+                    intersection_color = value
+                elif intersection_color != value:
+                    return None
+    if intersection_color is None:
+        return None
+    if any(_biaxial_marker_expand_with_color(p.input_grid, intersection_color) != p.output_grid for p in pairs):
+        return None
+    return intersection_color
 
 
 def _build_biaxial_marker_expand_hypothesis(features: dict[str, Any]) -> Hypothesis | None:
@@ -841,14 +817,6 @@ def _build_biaxial_marker_expand_hypothesis(features: dict[str, Any]) -> Hypothe
         return None
 
     fn = lambda g, c=intersection_color: _biaxial_marker_expand_with_color(g, c)
-    partial_total = 0.0
-    for p in pairs:
-        pred = fn(p.input_grid)
-        _, partial = _exact_and_partial_score(pred, p.output_grid)
-        partial_total += partial
-    mean_partial = partial_total / max(1, len(pairs))
-    if mean_partial < 0.75:
-        return None
     return Hypothesis(
         "relational::biaxial_marker_expand",
         fn,
@@ -942,160 +910,6 @@ def _color_fill_between_stripes(grid: Grid) -> Grid:
                 for y in range(h):
                     if out[y][x] == 0:
                         out[y][x] = fill
-    return out
-
-
-def _stripe_interleave_two_rows(grid: Grid) -> Grid:
-    g = _to_grid(grid)
-    h, w = _shape(g)
-    if h != 2 or w <= 0:
-        return [row[:] for row in g]
-
-    def dom_nonzero(row: list[int]) -> int:
-        counts: dict[int, int] = {}
-        for v in row:
-            if v == 0:
-                continue
-            counts[v] = counts.get(v, 0) + 1
-        if not counts:
-            return 0
-        return max(counts, key=counts.get)
-
-    c0 = dom_nonzero(g[0])
-    c1 = dom_nonzero(g[1])
-    if c0 == 0 or c1 == 0:
-        return [row[:] for row in g]
-
-    out = _blank(h, w, 0)
-    for x in range(w):
-        out[0][x] = c0 if (x % 2 == 0) else c1
-        out[1][x] = c1 if (x % 2 == 0) else c0
-    return out
-
-
-def _triad_majority_to_pattern(grid: Grid) -> Grid:
-    g = _to_grid(grid)
-    h, w = _shape(g)
-    if h != 3 or w != 3:
-        return [row[:] for row in g]
-
-    def dom_nonzero(row: list[int]) -> int:
-        counts: dict[int, int] = {}
-        for v in row:
-            if v == 0:
-                continue
-            counts[v] = counts.get(v, 0) + 1
-        if not counts:
-            return 0
-        return max(counts, key=counts.get)
-
-    d = [dom_nonzero(g[y]) for y in range(3)]
-    if any(v == 0 for v in d):
-        return [row[:] for row in g]
-
-    marker = min(9, max(max(row) for row in g) + 1)
-    out = _blank(3, 3, 0)
-    if d[0] == d[1] == d[2]:
-        for x in range(3):
-            out[0][x] = marker
-        return out
-    main_diag = (d[0] == d[1]) or (d[1] == d[2])
-    if main_diag:
-        for i in range(3):
-            out[i][i] = marker
-    else:
-        for i in range(3):
-            out[i][2 - i] = marker
-    return out
-
-
-def _triad_majority_to_pattern_marker(grid: Grid, marker: int) -> Grid:
-    g = _to_grid(grid)
-    h, w = _shape(g)
-    if h != 3 or w != 3:
-        return [row[:] for row in g]
-
-    def dom_nonzero(row: list[int]) -> int:
-        counts: dict[int, int] = {}
-        for v in row:
-            if v == 0:
-                continue
-            counts[v] = counts.get(v, 0) + 1
-        if not counts:
-            return 0
-        return max(counts, key=counts.get)
-
-    d = [dom_nonzero(g[y]) for y in range(3)]
-    if any(v == 0 for v in d):
-        return [row[:] for row in g]
-
-    out = _blank(3, 3, 0)
-    if d[0] == d[1] == d[2]:
-        for x in range(3):
-            out[0][x] = marker
-        return out
-    main_diag = (d[0] == d[1]) or (d[1] == d[2])
-    if main_diag:
-        for i in range(3):
-            out[i][i] = marker
-    else:
-        for i in range(3):
-            out[i][2 - i] = marker
-    return out
-
-
-def _infer_constant_output_marker(pairs: list[TrainFeatures]) -> int | None:
-    marker: int | None = None
-    for p in pairs:
-        colors = sorted({v for row in p.output_grid for v in row if v != 0})
-        if len(colors) != 1:
-            return None
-        c = colors[0]
-        if marker is None:
-            marker = c
-        elif marker != c:
-            return None
-    return marker
-
-
-def _infer_rowpos_color_map(pairs: list[TrainFeatures]) -> dict[int, int] | None:
-    mapping: dict[int, int] = {}
-    for p in pairs:
-        ih, iw = p.input_shape
-        oh, ow = p.output_shape
-        if (ih, iw, oh, ow) != (3, 3, 3, 3):
-            return None
-        for y in range(3):
-            nz = [x for x in range(3) if p.input_grid[y][x] != 0]
-            if len(nz) != 1:
-                return None
-            x = nz[0]
-            out_row = p.output_grid[y]
-            if len(set(out_row)) != 1:
-                return None
-            c = out_row[0]
-            if x in mapping and mapping[x] != c:
-                return None
-            mapping[x] = c
-    return mapping if len(mapping) >= 2 else None
-
-
-def _rowpos_to_color_rows(grid: Grid, mapping: dict[int, int]) -> Grid:
-    g = _to_grid(grid)
-    h, w = _shape(g)
-    if (h, w) != (3, 3):
-        return [row[:] for row in g]
-    out = _blank(3, 3, 0)
-    for y in range(3):
-        nz = [x for x in range(3) if g[y][x] != 0]
-        if len(nz) != 1:
-            return [row[:] for row in g]
-        x = nz[0]
-        if x not in mapping:
-            return [row[:] for row in g]
-        c = mapping[x]
-        for xx in range(3):
-            out[y][xx] = c
     return out
 
 
@@ -1450,268 +1264,6 @@ def _infer_extend_rows_by_period_to_double_width_rule(pairs: list[TrainFeatures]
         if _extend_rows_by_period_to_double_width(p.input_grid) != p.output_grid:
             return False
     return True
-
-
-def _recolor_non_anchor_to_five(grid: Grid, anchor: int) -> Grid:
-    g = _to_grid(grid)
-    h, w = _shape(g)
-    out = _blank(h, w, 0)
-    for y in range(h):
-        for x in range(w):
-            v = g[y][x]
-            if v == 0:
-                out[y][x] = 0
-            elif v == anchor:
-                out[y][x] = anchor
-            else:
-                out[y][x] = 5
-    return out
-
-
-def _infer_recolor_non_anchor_to_five_rule(pairs: list[TrainFeatures]) -> int | None:
-    anchor: int | None = None
-    for p in pairs:
-        if p.input_shape != p.output_shape:
-            return None
-        # Find a uniform non-zero row as anchor source.
-        cand = None
-        for row in p.input_grid:
-            nz = [v for v in row if v != 0]
-            if nz and len(set(nz)) == 1 and len(nz) == len(row):
-                cand = nz[0]
-                break
-        if cand is None:
-            return None
-        if anchor is None:
-            anchor = cand
-        elif anchor != cand:
-            return None
-        if _recolor_non_anchor_to_five(p.input_grid, cand) != p.output_grid:
-            return None
-    return anchor
-
-
-def _draw_right_diag_and_bottom_bar(grid: Grid) -> Grid:
-    g = _to_grid(grid)
-    h, w = _shape(g)
-    if h != w or h < 2:
-        return [row[:] for row in g]
-    out = [row[:] for row in g]
-    col0 = [g[y][0] for y in range(h)]
-    counts: dict[int, int] = {}
-    for v in col0:
-        if v != 0:
-            counts[v] = counts.get(v, 0) + 1
-    if not counts:
-        return out
-    stem = max(counts, key=counts.get)
-    for y in range(h):
-        out[y][0] = stem
-    for i in range(h - 1):
-        y = i
-        x = w - 1 - i
-        if x >= 1:
-            out[y][x] = 2
-    for x in range(1, w):
-        out[h - 1][x] = 4
-    return out
-
-
-def _infer_diag_bar_rule(pairs: list[TrainFeatures]) -> bool:
-    if not pairs:
-        return False
-    for p in pairs:
-        ih, iw = p.input_shape
-        if ih != iw:
-            return False
-        if p.output_shape != p.input_shape:
-            return False
-        if _draw_right_diag_and_bottom_bar(p.input_grid) != p.output_grid:
-            return False
-    return True
-
-
-def _compose_triptych_from_left(grid: Grid) -> Grid:
-    g = _to_grid(grid)
-    h, w = _shape(g)
-    if (h, w) != (3, 11):
-        return [row[:] for row in g]
-    a = [row[:3] for row in g]
-    r90 = _rotate90(a)
-    r180 = _rotate90(r90)
-    out = _blank(3, 11, 0)
-    for y in range(3):
-        out[y][0:3] = a[y]
-        out[y][3] = 5
-        out[y][4:7] = r90[y]
-        out[y][7] = 5
-        out[y][8:11] = r180[y]
-    return out
-
-
-def _infer_triptych_rule(pairs: list[TrainFeatures]) -> bool:
-    if not pairs:
-        return False
-    for p in pairs:
-        if p.input_shape != (3, 11) or p.output_shape != (3, 11):
-            return False
-        if _compose_triptych_from_left(p.input_grid) != p.output_grid:
-            return False
-    return True
-
-
-def _build_sliding_diagonal_from_row(grid: Grid) -> Grid:
-    g = _to_grid(grid)
-    h, w = _shape(g)
-    if h != 1 or w != 5:
-        return [row[:] for row in g]
-    row = g[0]
-    k = sum(1 for v in row if v != 0)
-    n = 5 * max(1, k)
-    out = _blank(n, n, 0)
-    for y in range(n):
-        offset = n - 1 - y
-        for i, v in enumerate(row):
-            x = offset + i
-            if 0 <= x < n and v != 0:
-                out[y][x] = v
-    return out
-
-
-def _infer_sliding_diagonal_rule(pairs: list[TrainFeatures]) -> bool:
-    if not pairs:
-        return False
-    for p in pairs:
-        if p.input_shape != (1, 5):
-            return False
-        if _build_sliding_diagonal_from_row(p.input_grid) != p.output_grid:
-            return False
-    return True
-
-
-def _find_uniform_row_anchor(grid: Grid) -> int | None:
-    for row in grid:
-        if row and all(v == row[0] and v != 0 for v in row):
-            return row[0]
-    return None
-
-
-def _preserve_anchor_else_five(grid: Grid, anchor: int) -> Grid:
-    g = _to_grid(grid)
-    h, w = _shape(g)
-    out = _blank(h, w, 0)
-    for y in range(h):
-        for x in range(w):
-            v = g[y][x]
-            if v == 0:
-                out[y][x] = 0
-            elif v == anchor:
-                out[y][x] = anchor
-            else:
-                out[y][x] = 5
-    return out
-
-
-def _preserve_uniform_row_anchor_else_five(grid: Grid) -> Grid:
-    g = _to_grid(grid)
-    anchor = _find_uniform_row_anchor(g)
-    if anchor is None:
-        return [row[:] for row in g]
-    return _preserve_anchor_else_five(g, anchor)
-
-
-def _infer_preserve_uniform_row_anchor_else_five_rule(pairs: list[TrainFeatures]) -> bool:
-    for p in pairs:
-        if p.input_shape != p.output_shape:
-            return False
-        if _preserve_uniform_row_anchor_else_five(p.input_grid) != p.output_grid:
-            return False
-    return True
-
-
-def _non_separator_segments(size: int, separators: set[int]) -> list[tuple[int, int]]:
-    segs: list[tuple[int, int]] = []
-    i = 0
-    while i < size:
-        if i in separators:
-            i += 1
-            continue
-        j = i
-        while j + 1 < size and (j + 1) not in separators:
-            j += 1
-        segs.append((i, j))
-        i = j + 1
-    return segs
-
-
-def _fill_separator_blocks_123(grid: Grid) -> Grid:
-    g = _to_grid(grid)
-    h, w = _shape(g)
-    out = [row[:] for row in g]
-    sep_rows = {y for y in range(h) if all(g[y][x] == 5 for x in range(w))}
-    sep_cols = {x for x in range(w) if all(g[y][x] == 5 for y in range(h))}
-    row_segs = _non_separator_segments(h, sep_rows)
-    col_segs = _non_separator_segments(w, sep_cols)
-    if len(row_segs) < 3 or len(col_segs) < 3:
-        return out
-    top_r = row_segs[0]
-    mid_r = row_segs[len(row_segs) // 2]
-    bot_r = row_segs[-1]
-    left_c = col_segs[0]
-    mid_c = col_segs[len(col_segs) // 2]
-    right_c = col_segs[-1]
-
-    def fill(rs: tuple[int, int], cs: tuple[int, int], color: int) -> None:
-        for y in range(rs[0], rs[1] + 1):
-            for x in range(cs[0], cs[1] + 1):
-                if out[y][x] != 5:
-                    out[y][x] = color
-
-    fill(top_r, left_c, 1)
-    fill(mid_r, mid_c, 2)
-    fill(bot_r, right_c, 3)
-    return out
-
-
-def _infer_fill_separator_blocks_123_rule(pairs: list[TrainFeatures]) -> bool:
-    if not pairs:
-        return False
-    for p in pairs:
-        if p.input_shape != p.output_shape:
-            return False
-        if _fill_separator_blocks_123(p.input_grid) != p.output_grid:
-            return False
-    return True
-
-
-def _infer_marker_sequence_rewrite_rule(pairs: list[TrainFeatures]) -> dict[tuple[tuple[int, ...], ...], Grid] | None:
-    if len(pairs) != 4:
-        return None
-    mapping: dict[tuple[tuple[int, ...], ...], Grid] = {}
-    for p in pairs:
-        ih, iw = p.input_shape
-        oh, ow = p.output_shape
-        if ih != 3 or oh != 3:
-            return None
-        if ow not in {iw - 2, iw - 3}:
-            return None
-        marker_count = sum(1 for row in p.input_grid for v in row if v == 5)
-        if marker_count != 4:
-            return None
-        if any(v == 5 for row in p.output_grid for v in row):
-            return None
-        key = tuple(tuple(int(v) for v in row) for row in p.input_grid)
-        mapping[key] = [row[:] for row in p.output_grid]
-    return mapping if len(mapping) == len(pairs) else None
-
-
-def _marker_sequence_rewrite(grid: Grid, mapping: dict[tuple[tuple[int, ...], ...], Grid]) -> Grid:
-    key = tuple(tuple(int(v) for v in row) for row in grid)
-    out = mapping.get(key)
-    if out is not None:
-        return [row[:] for row in out]
-    # Fallback: preserve safety when unseen; do not invent aggressive transforms.
-    return [row[:] for row in grid]
 
 
 def _stripe_reduce_to_period_vector(grid: Grid) -> Grid:
@@ -2476,40 +2028,17 @@ def generate_hypotheses(
                 )
     if pairs and all((p.output_shape[0] == p.input_shape[0] * p.input_shape[0] and p.output_shape[1] == p.input_shape[1] * p.input_shape[1]) for p in pairs):
         base.append(Hypothesis("kron_nonzero_self", _kron_nonzero_self, cost=2, prior=0.98, kind="single"))
-    if pairs and all((p.input_shape == (3, 3) and p.output_shape == (3, 3)) for p in pairs):
-        marker = _infer_constant_output_marker(pairs)
-        if marker is not None:
-            base.append(
-                Hypothesis(
-                    "triad_majority_to_pattern_marker",
-                    lambda g, m=int(marker): _triad_majority_to_pattern_marker(g, m),
-                    cost=1,
-                    prior=0.98,
-                    kind="single",
-                )
+    uniform_marker = _infer_uniform_rows_marker_rule(pairs)
+    if uniform_marker is not None:
+        base.append(
+            Hypothesis(
+                "uniform_rows_to_marker",
+                lambda g, m=int(uniform_marker): _uniform_rows_to_marker(g, m),
+                cost=1,
+                prior=0.98,
+                kind="single",
             )
-        uniform_marker = _infer_uniform_rows_marker_rule(pairs)
-        if uniform_marker is not None:
-            base.append(
-                Hypothesis(
-                    "uniform_rows_to_marker",
-                    lambda g, m=int(uniform_marker): _uniform_rows_to_marker(g, m),
-                    cost=1,
-                    prior=0.98,
-                    kind="single",
-                )
-            )
-        row_map = _infer_rowpos_color_map(pairs)
-        if row_map:
-            base.append(
-                Hypothesis(
-                    "rowpos_to_color_rows",
-                    lambda g, m=dict(row_map): _rowpos_to_color_rows(g, m),
-                    cost=1,
-                    prior=0.98,
-                    kind="single",
-                )
-            )
+        )
     prefix_rule = _infer_prefix_append_recolor_rule(pairs)
     if prefix_rule is not None:
         k, m = prefix_rule
@@ -2567,39 +2096,6 @@ def generate_hypotheses(
         )
     if _infer_extend_rows_by_period_to_double_width_rule(pairs):
         base.append(Hypothesis("extend_rows_by_period_double_width", _extend_rows_by_period_to_double_width, cost=1, prior=0.99, kind="single"))
-    anchor = _infer_recolor_non_anchor_to_five_rule(pairs)
-    if anchor is not None:
-        base.append(
-            Hypothesis(
-                "recolor_non_anchor_to_five",
-                lambda g, a=int(anchor): _recolor_non_anchor_to_five(g, a),
-                cost=1,
-                prior=0.99,
-                kind="single",
-            )
-        )
-    if _infer_diag_bar_rule(pairs):
-        base.append(Hypothesis("draw_right_diag_and_bottom_bar", _draw_right_diag_and_bottom_bar, cost=1, prior=0.99, kind="single"))
-    if _infer_triptych_rule(pairs):
-        base.append(Hypothesis("compose_triptych_from_left", _compose_triptych_from_left, cost=1, prior=0.99, kind="single"))
-    if _infer_sliding_diagonal_rule(pairs):
-        base.append(Hypothesis("build_sliding_diagonal_from_row", _build_sliding_diagonal_from_row, cost=1, prior=0.99, kind="single"))
-    if _infer_preserve_uniform_row_anchor_else_five_rule(pairs):
-        base.append(Hypothesis("preserve_uniform_row_anchor_else_five", _preserve_uniform_row_anchor_else_five, cost=1, prior=0.99, kind="single"))
-    if _infer_fill_separator_blocks_123_rule(pairs):
-        base.append(Hypothesis("fill_separator_blocks_123", _fill_separator_blocks_123, cost=1, prior=0.99, kind="single"))
-    marker_seq_map = _infer_marker_sequence_rewrite_rule(pairs)
-    if marker_seq_map is not None:
-        base.append(
-            Hypothesis(
-                "marker_sequence_rewrite",
-                lambda g, m=dict(marker_seq_map): _marker_sequence_rewrite(g, m),
-                cost=1,
-                prior=0.995,
-                kind="single",
-            )
-        )
-
     if features["all_same_shape"]:
         base.extend(
             [
@@ -2640,8 +2136,6 @@ def generate_hypotheses(
         base.append(Hypothesis("crop_nonzero_bbox", _crop_nonzero_bbox, cost=1, prior=0.88, kind="single"))
 
     if features.get("has_striped_input", False) and not features.get("all_same_shape", False):
-        base.append(Hypothesis("stripe_interleave_two_rows", _stripe_interleave_two_rows, cost=1, prior=0.93, kind="single"))
-        base.append(Hypothesis("triad_majority_to_pattern", _triad_majority_to_pattern, cost=1, prior=0.93, kind="single"))
         base.append(Hypothesis("stripe_reduce_to_period_vector", _stripe_reduce_to_period_vector, cost=1, prior=0.92, kind="single"))
         base.append(Hypothesis("extract_frame_interior", _extract_frame_interior, cost=1, prior=0.90, kind="single"))
         base.append(Hypothesis("collapse_stripe_runs", _collapse_stripe_runs, cost=1, prior=0.97, kind="single"))
@@ -2863,9 +2357,8 @@ def _build_portfolio_buckets(hypotheses: list[Hypothesis], tier: TierConfig) -> 
 
 
 def _build_bplus_candidates(hypotheses: list[Hypothesis]) -> list[Hypothesis]:
-    # B+ is a narrow, mid-power lane: structurally-targeted hypotheses with a
-    # hard cap. It includes a tiny geometric chain pack learned from Tier-C
-    # winners plus selected object conditionals.
+    # B+ is a bounded lane for generic geometry and conditionals generated
+    # from the current task. No preferred whole-program names are retained.
     out: list[Hypothesis] = []
     by_name: dict[str, Hypothesis] = {}
 
@@ -2878,17 +2371,6 @@ def _build_bplus_candidates(hypotheses: list[Hypothesis]) -> list[Hypothesis]:
         if h.name in {"identity", "recolor_map", "crop_nonzero_bbox"}:
             _add(h)
 
-    # High-signal object pattern pack.
-    for h in hypotheses:
-        if h.name in {
-            "obj::if[obj_count>3]?rotate_smallest_object:identity",
-            "obj::if[obj_count>4]?rotate_smallest_object:identity",
-            "obj::if[obj_count>3]?flip_largest_object_h:identity",
-            "obj::if[obj_count>4]?flip_largest_object_h:identity",
-            "obj::if[obj_size_ratio<=0.333]?recolor_smallest_to_largest_color:identity",
-        }:
-            _add(h)
-
     # Existing object/conditional signals.
     for h in hypotheses:
         if h.name.startswith("obj::") or h.kind == "conditional":
@@ -2899,7 +2381,7 @@ def _build_bplus_candidates(hypotheses: list[Hypothesis]) -> list[Hypothesis]:
         if "symmetry" in h.name or "repeat_" in h.name:
             _add(h)
 
-    # Tiny geometric chain pack (Tier-C distilled).
+    # Fixed compositions of generic rotation/reflection primitives.
     chain_pack = [
         ("bplus::flip_h->flip_v", _compose(_flip_v, _flip_h)),
         ("bplus::flip_h->rotate90", _compose(_rotate90, _flip_h)),
@@ -2950,8 +2432,6 @@ def _build_clite_relational_candidates(features: dict[str, Any]) -> list[Hypothe
             Hypothesis("relational::collapse_stripe_runs", _collapse_stripe_runs, cost=1, prior=0.97, kind="single"),
             Hypothesis("relational::route_control_color_paths", _route_control_color_paths, cost=2, prior=0.94, kind="single"),
             Hypothesis("relational::recolor_by_coordinate_parity", _recolor_by_coordinate_parity, cost=1, prior=0.95, kind="single"),
-            Hypothesis("relational::stripe_interleave_two_rows", _stripe_interleave_two_rows, cost=1, prior=0.96, kind="single"),
-            Hypothesis("relational::triad_majority_to_pattern", _triad_majority_to_pattern, cost=1, prior=0.96, kind="single"),
             Hypothesis("relational::stripe_reduce_to_period_vector", _stripe_reduce_to_period_vector, cost=1, prior=0.95, kind="single"),
             Hypothesis("relational::extract_frame_interior", _extract_frame_interior, cost=1, prior=0.94, kind="single"),
             Hypothesis("relational::extrapolate_stripe", _extrapolate_stripe, cost=1, prior=0.93, kind="single"),
@@ -2969,12 +2449,9 @@ def _build_clite_relational_candidates(features: dict[str, Any]) -> list[Hypothe
     return [
         Hypothesis("relational::route_control_color_paths", _route_control_color_paths, cost=2, prior=0.92, kind="single"),
         Hypothesis("relational::recolor_by_coordinate_parity", _recolor_by_coordinate_parity, cost=1, prior=0.94, kind="single"),
-        Hypothesis("relational::stripe_interleave_two_rows", _stripe_interleave_two_rows, cost=1, prior=0.88, kind="single"),
-        Hypothesis("relational::triad_majority_to_pattern", _triad_majority_to_pattern, cost=1, prior=0.88, kind="single"),
         Hypothesis("relational::mirror_across_global_axis_h", _mirror_across_global_axis_h, cost=1, prior=0.90, kind="single"),
         Hypothesis("relational::mirror_across_global_axis_v", _mirror_across_global_axis_v, cost=1, prior=0.90, kind="single"),
         Hypothesis("relational::rotate270", _rotate270, cost=1, prior=0.92, kind="single"),
-        Hypothesis("relational::marker_frame_fill", _marker_frame_fill, cost=2, prior=0.88, kind="single"),
         Hypothesis("relational::snap_to_closest_neighbor", _snap_to_closest_neighbor, cost=2, prior=0.86, kind="single"),
         Hypothesis("relational::snap_smallest_to_largest_side", _snap_smallest_to_largest_side, cost=2, prior=0.91, kind="single"),
         Hypothesis("relational::align_smallest_to_largest_row", _align_smallest_to_largest_row, cost=2, prior=0.90, kind="single"),

@@ -1,41 +1,46 @@
 # Saient ARC Gremlin
 
-Open-source symbolic ARC reasoning research from **SaientAI**.
+Open-source symbolic ARC reasoning research from **SaientAI**. Version **0.2** corrects the hypothesis catalog following community review.
 
-Saient ARC Gremlin explores ARC-AGI-1 puzzles through bounded hypothesis selection, geometric/object transformations, and optional spatial-program synthesis. Offline Python 3.12 standard-library only; no model weights or external APIs.
+The solver uses bounded geometric and object transformations, task-derived parameters, and training-example fit. A deterministic selector compares original, rotated and palette-normalized representations. Python 3.12 standard library only; no model weights or external inference APIs.
 
-## Tested public results (ARC-AGI-1, not ARC-AGI-2)
+## Catalog correction
 
-| Method | Public evaluation tasks | Exact output grids |
-|---|---:|---:|
-| Original ARC Gremlin | 2/400 | 2/419 (0.4773%) |
-| Multi-representation selector | **3/400** | **3/419 (0.7160%)** |
+Version 0.2 removes fixed puzzle recipes, whole-grid training-example lookup and an exact-program priority list. It also rejects unsupported crossing-color inference and removes an arbitrary 3×3 restriction from learned uniform-row marking. The notebook's embedded source has been rebuilt from the same corrected modules.
 
-The multi-representation system applies the same solver to its original grid, a consistently rotated grid, and a canonically recoloured grid. It scores candidates using only labelled *training examples*, selects by exact/pixel training agreement, and maps predictions back. The extra public evaluation solve was task e41c6fd3 via palette normalisation. Scores are **self-reported on the public ARC-AGI-1 evaluation set**, not privately verified. No AGI claims.
+See the [catalog audit](docs/catalog-review.md) for the removed families, retained assumptions, provenance limits and scope. Handwritten primitives, bounded search and heuristics remain. This correction is not a claim of proven generalization or guaranteed leaderboard acceptance.
 
-A separate opt-in prototype (arc_gremlin/spatial_programs.py) adds connected-component scene graphs, spatial relationships and a safe two-step transformation DSL. arc_gremlin/extended_solver.py adds budgeted test-time search. This is **off by default** and not included in the 0.7160% score. On 40 public ARC-AGI-1 *training* tasks, combined extended solving did **not** improve upon the 3/40 baseline and used more CPU time. The six synthetic designed tasks are for development only, not independent ARC evidence.
+## Reproduced public results
+
+The complete ARC-AGI-1 public evaluation was rerun on 27 October 2026 after freezing the correction:
+
+| Version 0.2 method | Complete tasks | Exact output grids |
+| --- | ---: | ---: |
+| Original-view solver | 2/400 | 2/419 (0.4773%) |
+| Three-view selector | **3/400** | **3/419 (0.71599%)** |
+
+The corrected selector has the same task/grid totals as version 0.1, with no gained or lost tasks. One unsolved task's prediction changed. All 400 tasks were evaluated, with 419 test grids and zero view errors; the full run took 131.5 seconds locally. Runtime depends on hardware and load.
+
+[Machine-readable evaluation evidence](docs/evaluation-v0.2.json) includes source and dataset hashes, per-task outcomes, score denominators and comparison with the prior revision. Test outputs are used only after predictions and TRAIN-based view selection are complete. These are self-reported results on public data already seen during development, not a new unseen-data estimate or a privately verified score. No ARC-AGI-2/3 score is claimed.
 
 ## Reproduce
 
-1. Obtain ARC-AGI-1 v1 public data from https://github.com/fchollet/ARC-AGI .
-2. Set SAIENT_ARC_DATA to the folder with 400 public evaluation task JSON files (usually data/evaluation).
-3. Run: python3 tools/benchmark.py . It writes results/eval_summary.json and results/eval_results.json. Optional SAIENT_ARC_LIMIT=2 is a smoke test only.
-4. Run: python3 -m unittest discover -s tests -v to check the spatial research components.
-
-Ground-truth test outputs are used only for post-prediction scoring, never as inputs to the solver or selector. Per-output score is 3/419 (0.71599%); task-level score is 3/400 (0.75%). Full three-view evaluation took about 135–148 seconds locally (hardware-dependent).
+1. Obtain [ARC-AGI-1 public data](https://github.com/fchollet/ARC-AGI). The evidence file records the dataset commit and individual file hashes.
+2. Set `SAIENT_ARC_DATA` to its `data/evaluation` directory containing 400 JSON files.
+3. Run `python3 tools/benchmark.py`. It writes `results/eval_summary.json` and `results/eval_results.json`; `SAIENT_ARC_OUT` can choose a different destination. `SAIENT_ARC_LIMIT` is only for smoke tests and must be unset for the full evaluation.
+4. Run `python3 -m unittest discover -s tests -v` (23 tests in this revision).
+5. Run `python3 tools/build_kaggle_bundle.py --check` to verify that the notebook embeds the current source. Rebuild it with the same command without `--check` after source changes.
 
 ## Optional spatial program search
 
-Example: python3 -m arc_gremlin.extended_solver task.json --multi-view --program-search --budget-ms 1000 --max-candidates 512
+`arc_gremlin/spatial_programs.py` contains connected-component scene graphs, spatial relations and a bounded two-step DSL. `arc_gremlin/extended_solver.py` adds budgeted test-time search. Both are opt-in and excluded from the reported 0.71599% result. Synthetic tests exercise their behavior; they are not independent ARC accuracy evidence.
 
-The Python-level deadline is not a hard operating-system deadline. The synthesis DSL uses whitelisted transformations; no arbitrary generated Python execution.
+Example: `python3 -m arc_gremlin.extended_solver task.json --multi-view --program-search --budget-ms 1000 --max-candidates 512`.
 
-## Licence
+The Python-level deadline is not a hard operating-system deadline. The synthesis DSL uses whitelisted transformations and does not execute arbitrary generated Python.
 
-MIT License. Copyright 2026 SaientAI contributors. See LICENSE.
+## Licence and review status
 
-This is the standalone public ARC research implementation, not a release of unrelated software.
+MIT License. Copyright 2026 SaientAI contributors. See [LICENSE](LICENSE).
 
-## Leaderboard status
-
-Submitted for community review at https://github.com/arcprize/ARC-AGI-Community-Leaderboard . Inclusion is discretionary. This code does not claim scores for the ARC-AGI-2/3 Kaggle competitions.
+This is the standalone public ARC implementation. [Community leaderboard PR #63](https://github.com/arcprize/ARC-AGI-Community-Leaderboard/pull/63) remains subject to maintainer review of general-purpose behavior, openness and novelty. Updating this repository does not replace or submit an existing Kaggle run.

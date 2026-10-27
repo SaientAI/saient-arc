@@ -1,7 +1,4 @@
-import ast
 import copy
-import hashlib
-from pathlib import Path
 import sys
 import time
 import unittest
@@ -9,8 +6,6 @@ from unittest.mock import patch
 from arc_gremlin.extended_solver import solve_extended, deadline_guard, DeadlineExceeded
 from arc_gremlin.saient_solver import Hypothesis
 from test_spatial_programs import TASKS
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def task(name='recolor'):
@@ -24,9 +19,21 @@ def weak_baseline(t):
 
 
 class ExtendedTests(unittest.TestCase):
-    def test_original_unchanged(self):
-        self.assertEqual(hashlib.sha256((ROOT/'arc_gremlin/saient_solver.py').read_bytes()).hexdigest(),
-                         '63b02e86d13e1bdcce9b9474e3afd34c06191aece166fede60c5838513339776')
+    def test_real_baseline_ignores_test_targets(self):
+        a = {'train': [{'input': [[1, 0]], 'output': [[1, 0]]},
+                       {'input': [[2, 0]], 'output': [[2, 0]]}],
+             'test': [{'input': [[3, 0]], 'output': [[9]]}]}
+        b = copy.deepcopy(a)
+        b['test'][0]['output'] = [[8, 8], [8, 8]]
+        before = copy.deepcopy(a)
+        opts = dict(budget_ms=1000, multi_view=True, program_search=False)
+        x, y = solve_extended(a, **opts), solve_extended(b, **opts)
+        self.assertEqual(x['predictions'], [[[3, 0]]])
+        self.assertEqual(x['predictions'], y['predictions'])
+        self.assertEqual(x['selected'], y['selected'])
+        self.assertEqual(x['train_score'], y['train_score'])
+        self.assertEqual(x['views'], y['views'])
+        self.assertEqual(a, before)
 
     def test_no_target_access_and_determinism(self):
         class Forbidden(dict):
